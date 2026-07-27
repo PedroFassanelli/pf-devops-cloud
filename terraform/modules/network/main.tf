@@ -52,8 +52,8 @@ resource "aws_subnet" "public" {
   tags = merge(local.common_tags, {
     Name = "${var.name_prefix}-public-${local.azs[count.index]}"
     # Tags que EKS necesita para ubicar dónde crear los load balancers.
-    "kubernetes.io/role/elb"                        = "1"
-    "kubernetes.io/cluster/${var.cluster_name}"     = "shared"
+    "kubernetes.io/role/elb"                    = "1"
+    "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   })
 }
 
@@ -65,7 +65,7 @@ resource "aws_subnet" "private" {
   availability_zone = local.azs[count.index]
 
   tags = merge(local.common_tags, {
-    Name = "${var.name_prefix}-private-${local.azs[count.index]}"
+    Name                                        = "${var.name_prefix}-private-${local.azs[count.index]}"
     "kubernetes.io/role/internal-elb"           = "1"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
   })

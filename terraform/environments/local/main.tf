@@ -144,13 +144,13 @@ resource "helm_release" "ingress_nginx" {
 # kind no lo trae instalado por defecto.
 
 resource "helm_release" "metrics_server" {
-  name             = "metrics-server"
-  repository       = "https://kubernetes-sigs.github.io/metrics-server/"
-  chart            = "metrics-server"
-  version          = var.metrics_server_version
-  namespace        = "kube-system"
-  wait             = true
-  timeout          = 300
+  name       = "metrics-server"
+  repository = "https://kubernetes-sigs.github.io/metrics-server/"
+  chart      = "metrics-server"
+  version    = var.metrics_server_version
+  namespace  = "kube-system"
+  wait       = true
+  timeout    = 300
 
   # kind usa certificados de kubelet autofirmados.
   set {
