@@ -18,6 +18,11 @@ ENV PIP_NO_CACHE_DIR=1 \
 
 WORKDIR /build
 
+# build-essential se usa solo para compilar los wheels y se descarta en la
+# etapa runtime (multi-stage): no viaja en la imagen final. Fijar su versión
+# exacta (DL3008) no aporta seguridad y volvería frágil el build, porque esa
+# versión desaparece del repo de Debian al actualizarse la imagen slim.
+# hadolint ignore=DL3008
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
