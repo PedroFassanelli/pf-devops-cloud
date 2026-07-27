@@ -1,0 +1,15 @@
+# Copiar a terraform.tfvars (ignorado por git) y ajustar según necesidad.
+
+aws_region   = "us-east-1"
+project_name = "task-api"
+environment  = "staging"
+owner        = "tu-nombre"
+cost_center  = "formacion"
+
+vpc_cidr = "10.0.0.0/16"
+az_count = 2
+
+node_instance_types = ["t3.small", "t3a.small"]
+node_min_size       = 2
+node_max_size       = 4
+node_desired_size   = 2

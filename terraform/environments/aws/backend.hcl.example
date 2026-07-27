@@ -1,0 +1,9 @@
+# Plantilla de configuración del backend remoto.
+# Copiar a backend.hcl (que está en .gitignore) y completar con valores reales:
+#   terraform init -backend-config=backend.hcl
+
+bucket         = "REEMPLAZAR-tfstate-bucket"
+key            = "task-api/staging/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "REEMPLAZAR-terraform-locks"
+encrypt        = true

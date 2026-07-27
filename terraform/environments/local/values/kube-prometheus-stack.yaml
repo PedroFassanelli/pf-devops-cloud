@@ -1,0 +1,78 @@
+# =============================================================================
+# Valores del chart kube-prometheus-stack para el entorno local.
+# Se recortan componentes pesados para que el stack entre cómodo en un kind.
+# =============================================================================
+
+fullnameOverride: monitoring
+
+prometheus:
+  prometheusSpec:
+    # FinOps / recursos: retención corta y volumen chico. En producción esto
+    # se dimensiona según cuántos días de métricas se necesitan consultar.
+    retention: 6h
+    retentionSize: 1GB
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 400Mi
+      limits:
+        memory: 800Mi
+
+    # Permite que Prometheus descubra ServiceMonitors de cualquier namespace,
+    # no solo los que instaló el propio chart.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+grafana:
+  adminPassword: admin   # solo entorno local; en real va por Secret
+  defaultDashboardsTimezone: America/Argentina/Buenos_Aires
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+  # Carga automática del dashboard propio de la aplicación.
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: task-api
+          orgId: 1
+          folder: Task API
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/task-api
+
+  dashboardsConfigMaps:
+    task-api: task-api-dashboard
+
+# Componentes que no aportan al alcance del proyecto y consumen recursos.
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 20m
+        memory: 64Mi
+
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
