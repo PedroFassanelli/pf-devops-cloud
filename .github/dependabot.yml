@@ -1,0 +1,28 @@
+# Actualización automática de dependencias: mantiene bajo el riesgo de CVE
+# sin trabajo manual (DevSecOps preventivo).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencias, seguridad]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels: [dependencias, docker]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: [dependencias, ci]
+
+  - package-ecosystem: terraform
+    directory: "/terraform/environments/aws"
+    schedule:
+      interval: monthly
+    labels: [dependencias, terraform]

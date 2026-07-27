@@ -1,0 +1,301 @@
+# =============================================================================
+# CI — Integración continua
+#
+# Jobs paralelizados: calidad, SAST, seguridad de IaC y validación de
+# manifiestos corren al mismo tiempo. El build de la imagen solo arranca si
+# todos pasaron, y a su vez se le escanea la imagen resultante con Trivy.
+#
+#   quality ──┐
+#   sast ─────┼──> build-and-push ──> scan-image
+#   iac ──────┘
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Un push nuevo cancela la corrida anterior de la misma rama:
+# ahorra minutos de runner (FinOps aplicado al propio pipeline).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  quality:
+    name: Calidad y tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements-dev.txt
+
+      - name: Linter (ruff)
+        run: ruff check . --output-format=github
+
+      - name: Formato (ruff format)
+        run: ruff format --check .
+
+      - name: Tests unitarios con cobertura
+        run: pytest --cov=app --cov-report=xml --cov-report=term --cov-fail-under=80
+
+      - name: Publicar reporte de cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  sast:
+    name: SAST — análisis estático de seguridad
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # necesario para subir resultados SARIF
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Instalar Bandit
+        run: pip install "bandit[toml,sarif]==1.8.0"
+
+      # Bandit: detecta patrones inseguros en código Python
+      # (uso de eval, subprocess con shell=True, secretos hardcodeados...).
+      - name: Bandit
+        run: bandit -c pyproject.toml -r app/ -f sarif -o bandit.sarif || true
+
+      - name: Publicar hallazgos de Bandit
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+      # Semgrep: reglas de seguridad específicas de Python y OWASP Top 10.
+      - name: Semgrep
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/security-audit
+            p/owasp-top-ten
+        continue-on-error: true
+
+      - name: Subir reportes de SAST
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-reports
+          path: bandit.sarif
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: SAST — CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inicializar CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-and-quality
+
+      - name: Analizar
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
+
+  # ---------------------------------------------------------------------------
+  iac-security:
+    name: Seguridad de IaC y manifiestos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Verificar formato de Terraform
+        run: terraform fmt -check -recursive terraform/
+
+      # -backend=false: valida la sintaxis sin necesitar credenciales de AWS
+      # ni acceso al bucket de estado remoto.
+      - name: Validar entorno AWS
+        working-directory: terraform/environments/aws
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validar entorno local
+        working-directory: terraform/environments/local
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      # Checkov: analiza IaC buscando malas configuraciones de seguridad
+      # (buckets públicos, cifrado ausente, security groups abiertos...).
+      - name: Checkov sobre Terraform
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: terraform/
+          framework: terraform
+          soft_fail: true
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+
+      - name: Publicar hallazgos de Checkov
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+      # Hadolint: buenas prácticas de Dockerfile.
+      - name: Hadolint sobre el Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+
+      # Kubeconform: valida los manifiestos contra el esquema real de la API.
+      - name: Validar manifiestos de Kubernetes
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar xz -C /tmp
+          /tmp/kubeconform -summary -strict -ignore-missing-schemas \
+            -schema-location default \
+            k8s/base/ monitoring/servicemonitor.yaml monitoring/prometheus-rules.yaml
+
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build y push de la imagen
+    needs: [quality, sast, codeql, iac-security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Autenticarse en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          # Token efímero provisto por GitHub: no hay credenciales guardadas.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calcular tags y labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern=v{{version}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Construir y publicar
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          # Caché en el registry: acelera builds sucesivos y ahorra minutos.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+      - name: Reportar tamaño de la imagen
+        if: github.event_name != 'pull_request'
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-$(git rev-parse --short HEAD)
+          echo "### Imagen construida" >> $GITHUB_STEP_SUMMARY
+          docker images --format "| {{.Repository}} | {{.Tag}} | {{.Size}} |" \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} >> $GITHUB_STEP_SUMMARY
+
+  # ---------------------------------------------------------------------------
+  scan-image:
+    name: Escaneo de vulnerabilidades de la imagen
+    needs: build-and-push
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Trivy escanea la imagen ya construida: paquetes del SO y dependencias
+      # de Python con CVE conocidos.
+      - name: Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Publicar hallazgos de Trivy
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      - name: Fallar ante vulnerabilidades críticas
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
