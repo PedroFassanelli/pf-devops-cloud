@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: task-api
+  namespace: task-api
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: task-api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Solo el Ingress Controller y Prometheus pueden hablarle a los Pods.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    # Solo se permite salida a DNS: la app no necesita nada más.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53

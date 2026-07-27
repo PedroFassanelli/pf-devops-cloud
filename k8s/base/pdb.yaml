@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: task-api
+  namespace: task-api
+spec:
+  # Garantiza al menos 1 Pod disponible durante drenajes de nodo
+  # (upgrades del cluster, reemplazo de instancias SPOT).
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: task-api
