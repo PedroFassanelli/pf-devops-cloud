@@ -36,7 +36,7 @@ jobs:
     if: github.event_name == 'schedule' || inputs.accion == 'apagar' || inputs.accion == 'encender'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Determinar la acción
         id: decidir
