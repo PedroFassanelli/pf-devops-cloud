@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+override.tf
+override.tf.json
+.terraformrc
+terraform.rc
+
+# NUNCA versionar: contienen valores reales de variables
+*.auto.tfvars
+terraform.tfvars
+
+# Secretos y entorno
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+kubeconfig*
+
+# Reportes de herramientas
+bandit-report.json
+trivy-results.sarif
+zap-report.*
+
+# Sistema
+.DS_Store
+.idea/
+.vscode/
+
+CLAUDE.md
