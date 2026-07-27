@@ -60,7 +60,7 @@ jobs:
 
       - name: Publicar reporte de cobertura
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.xml
@@ -107,7 +107,7 @@ jobs:
 
       - name: Subir reportes de SAST
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sast-reports
           path: bandit.sarif
