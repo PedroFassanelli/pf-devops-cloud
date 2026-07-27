@@ -287,7 +287,7 @@ jobs:
       # Trivy escanea la imagen ya construida: paquetes del SO y dependencias
       # de Python con CVE conocidos.
       - name: Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}@${{ needs.build-and-push.outputs.image-digest }}
           format: sarif
@@ -302,7 +302,7 @@ jobs:
           category: trivy
 
       - name: Fallar ante vulnerabilidades críticas
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}@${{ needs.build-and-push.outputs.image-digest }}
           format: table
