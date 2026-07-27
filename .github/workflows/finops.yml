@@ -1,0 +1,162 @@
+# =============================================================================
+# FinOps — Optimización automatizada de costos
+#
+# Tres mecanismos:
+#   1. Apagado nocturno/fin de semana del entorno de pruebas (escala a 0).
+#   2. Encendido al inicio de la jornada laboral.
+#   3. Limpieza de imágenes viejas del registry.
+#
+# El apagado fuera de horario en un entorno no productivo ahorra alrededor
+# del 65 % del costo de cómputo: de 168 horas semanales se pagan ~60.
+# =============================================================================
+name: FinOps
+
+on:
+  schedule:
+    # Los cron de GitHub Actions van en UTC.
+    # Argentina es UTC-3.
+    - cron: "0 23 * * 1-5"   # 20:00 ART, lunes a viernes -> APAGAR
+    - cron: "0 11 * * 1-5"   # 08:00 ART, lunes a viernes -> ENCENDER
+    - cron: "0 3 * * 0"      # domingo 00:00 ART          -> limpiar registry
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: "Acción a ejecutar"
+        type: choice
+        options: [apagar, encender, limpiar-registry, reporte-costos]
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  escalado-programado:
+    name: Apagar / encender entorno de pruebas
+    if: github.event_name == 'schedule' || inputs.accion == 'apagar' || inputs.accion == 'encender'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determinar la acción
+        id: decidir
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ACCION="${{ inputs.accion }}"
+          elif [ "${{ github.event.schedule }}" = "0 23 * * 1-5" ]; then
+            ACCION="apagar"
+          elif [ "${{ github.event.schedule }}" = "0 11 * * 1-5" ]; then
+            ACCION="encender"
+          else
+            ACCION="ninguna"
+          fi
+          echo "accion=$ACCION" >> $GITHUB_OUTPUT
+          echo "Acción determinada: $ACCION"
+
+      - name: Autenticarse en AWS
+        id: aws
+        if: vars.AWS_ROLE_ARN != '' && steps.decidir.outputs.accion != 'ninguna'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      # APAGAR: se escala el node group a 0. El control plane de EKS sigue
+      # facturando (~US$0,10/h), pero las instancias EC2 y su EBS no.
+      - name: Escalar node group a cero
+        if: steps.aws.outcome == 'success' && steps.decidir.outputs.accion == 'apagar'
+        run: |
+          CLUSTER="${{ vars.EKS_CLUSTER_NAME }}"
+          NG=$(aws eks list-nodegroups --cluster-name "$CLUSTER" --query 'nodegroups[0]' --output text)
+          aws eks update-nodegroup-config \
+            --cluster-name "$CLUSTER" --nodegroup-name "$NG" \
+            --scaling-config minSize=0,maxSize=4,desiredSize=0
+          echo "Node group $NG escalado a 0 nodos" >> $GITHUB_STEP_SUMMARY
+
+      - name: Restaurar node group
+        if: steps.aws.outcome == 'success' && steps.decidir.outputs.accion == 'encender'
+        run: |
+          CLUSTER="${{ vars.EKS_CLUSTER_NAME }}"
+          NG=$(aws eks list-nodegroups --cluster-name "$CLUSTER" --query 'nodegroups[0]' --output text)
+          aws eks update-nodegroup-config \
+            --cluster-name "$CLUSTER" --nodegroup-name "$NG" \
+            --scaling-config minSize=2,maxSize=4,desiredSize=2
+          echo "Node group $NG restaurado a 2 nodos" >> $GITHUB_STEP_SUMMARY
+
+      - name: Registrar la simulación (sin credenciales AWS)
+        if: steps.aws.outcome != 'success' && steps.decidir.outputs.accion != 'ninguna'
+        run: |
+          {
+            echo "### FinOps — ${{ steps.decidir.outputs.accion }} (simulado)"
+            echo ""
+            echo "No hay credenciales de AWS configuradas, por lo que la acción se registra sin ejecutarse."
+            echo "Comando que se ejecutaría:"
+            echo '```bash'
+            echo "aws eks update-nodegroup-config --cluster-name \$CLUSTER --nodegroup-name \$NG \\"
+            if [ "${{ steps.decidir.outputs.accion }}" = "apagar" ]; then
+              echo "  --scaling-config minSize=0,maxSize=4,desiredSize=0"
+            else
+              echo "  --scaling-config minSize=2,maxSize=4,desiredSize=2"
+            fi
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+
+  # ---------------------------------------------------------------------------
+  limpiar-registry:
+    name: Limpiar imágenes antiguas
+    if: (github.event_name == 'schedule' && github.event.schedule == '0 3 * * 0') || inputs.accion == 'limpiar-registry'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      # Cada build deja una imagen. Sin limpieza, el almacenamiento crece de
+      # forma indefinida y se paga por GB/mes para siempre.
+      - name: Eliminar versiones sin etiqueta y antiguas
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ github.event.repository.name }}
+          package-type: container
+          min-versions-to-keep: 10
+          delete-only-untagged-versions: false
+          ignore-versions: '^(latest|main|v\\d+\\.\\d+\\.\\d+)$'
+
+      - name: Resumen
+        run: |
+          echo "### Limpieza del registry" >> $GITHUB_STEP_SUMMARY
+          echo "Se conservan las últimas 10 versiones. Los tags latest, main y semver quedan protegidos." >> $GITHUB_STEP_SUMMARY
+
+  # ---------------------------------------------------------------------------
+  reporte-costos:
+    name: Reporte de costos
+    if: inputs.accion == 'reporte-costos'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Autenticarse en AWS
+        id: aws
+        if: vars.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      # Cost Explorer permite filtrar por el tag CostCenter que define el
+      # provider de Terraform: así se ve el gasto de ESTE proyecto y no el total.
+      - name: Consultar Cost Explorer
+        if: steps.aws.outcome == 'success'
+        run: |
+          DESDE=$(date -d '30 days ago' +%Y-%m-%d)
+          HASTA=$(date +%Y-%m-%d)
+          aws ce get-cost-and-usage \
+            --time-period Start=$DESDE,End=$HASTA \
+            --granularity MONTHLY \
+            --metrics UnblendedCost \
+            --group-by Type=DIMENSION,Key=SERVICE \
+            --filter '{"Tags":{"Key":"CostCenter","Values":["formacion"]}}' \
+            --output table | tee costos.txt
+
+          {
+            echo "### Costos de los últimos 30 días"
+            echo '```'
+            cat costos.txt
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
