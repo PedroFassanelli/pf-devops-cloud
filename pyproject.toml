@@ -1,0 +1,25 @@
+[project]
+name = "task-api"
+version = "1.0.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "S", "C4"]
+ignore = [
+  "S104",  # bind 0.0.0.0 es intencional dentro del contenedor
+  "B008",  # Depends()/Query() en defaults es el patrón idiomático de FastAPI
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # assert es esperado en tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=80"
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
