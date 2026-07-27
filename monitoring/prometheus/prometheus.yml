@@ -1,0 +1,19 @@
+# Configuración de Prometheus para el entorno de Docker Compose.
+# En Kubernetes el scrapeo lo define el ServiceMonitor, no este archivo.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: local-compose
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: task-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8000"]
+        labels:
+          service: task-api

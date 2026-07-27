@@ -1,0 +1,55 @@
+# Reglas de alerta sobre las métricas que expone la aplicación.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: task-api
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: task-api.rules
+      rules:
+        - alert: TaskApiAltaTasaDeErrores
+          expr: |
+            sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+              /
+            sum(rate(http_requests_total[5m])) > 0.05
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Más del 5% de los requests devuelven error 5xx"
+            description: "La tasa de errores lleva 2 minutos por encima del umbral."
+
+        - alert: TaskApiLatenciaAlta
+          expr: |
+            histogram_quantile(
+              0.95,
+              sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+            ) > 0.5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "La latencia p95 supera los 500 ms"
+
+        - alert: TaskApiSinReplicasDisponibles
+          expr: kube_deployment_status_replicas_available{deployment="task-api"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "No hay Pods disponibles de task-api"
+
+        - alert: TaskApiHpaEnElLimite
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler="task-api"}
+              >=
+            kube_horizontalpodautoscaler_spec_max_replicas{horizontalpodautoscaler="task-api"}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "El HPA alcanzó su techo de réplicas"
+            description: "Revisar si corresponde subir maxReplicas o si hay un problema de performance."

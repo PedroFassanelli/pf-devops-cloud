@@ -1,0 +1,22 @@
+# ServiceMonitor: CRD de Prometheus Operator. Le indica a Prometheus qué
+# scrapear de forma declarativa, sin tocar la configuración global.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: task-api
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: task-api
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - task-api
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: task-api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
