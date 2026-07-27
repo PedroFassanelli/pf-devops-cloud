@@ -219,7 +219,7 @@ jobs:
 
       - name: Publicar evidencias
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: evidencias-despliegue
           path: evidencias/
@@ -281,7 +281,7 @@ jobs:
 
       - name: Publicar reportes de DAST
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reportes-dast
           path: |
