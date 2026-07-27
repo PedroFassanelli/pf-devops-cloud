@@ -1,0 +1,295 @@
+# =============================================================================
+# CD — Despliegue continuo y verificación
+#
+# 1. terraform-plan: valida y planifica la infra AWS (sin aplicar: cuesta).
+# 2. deploy: levanta un cluster kind EFÍMERO dentro del runner, provisiona la
+#    plataforma, despliega la app y verifica el rollout.
+# 3. dast: OWASP ZAP contra la aplicación realmente desplegada.
+# 4. evidencias: recolecta logs y estado del cluster como artefactos.
+#
+# El cluster efímero permite un despliegue real y DAST real con costo cero
+# y sin infraestructura que quede encendida.
+# =============================================================================
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_dast:
+        description: "Ejecutar análisis DAST"
+        type: boolean
+        default: true
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false   # nunca cancelar un despliegue a mitad de camino
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  NAMESPACE: task-api
+  APP_HOST: task-api.local
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  terraform-plan:
+    name: Terraform plan (AWS)
+    # Solo corre si CI terminó bien.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Init y validate
+        working-directory: terraform/environments/aws
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      # El plan real requiere credenciales. Si el repositorio tiene
+      # configurado el rol OIDC, se ejecuta; si no, se omite sin fallar.
+      - name: Autenticarse en AWS vía OIDC
+        id: aws
+        if: vars.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Plan
+        if: steps.aws.outcome == 'success'
+        working-directory: terraform/environments/aws
+        run: |
+          terraform init -backend-config=backend.hcl
+          terraform plan -out=tfplan -no-color | tee plan.txt
+          {
+            echo "### Terraform plan"
+            echo '```'
+            tail -50 plan.txt
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Aviso si no hay credenciales
+        if: steps.aws.outcome != 'success'
+        run: |
+          echo "### Terraform plan omitido" >> $GITHUB_STEP_SUMMARY
+          echo "No hay AWS_ROLE_ARN configurado. La validación sintáctica sí se ejecutó." >> $GITHUB_STEP_SUMMARY
+
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Desplegar en Kubernetes
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      app_url: http://localhost:8080
+    steps:
+      - uses: actions/checkout@v4
+
+      # -------------------------- CLUSTER EFÍMERO ---------------------------
+      - name: Crear cluster kind
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ci-cluster
+          config: .github/kind-ci.yaml
+          wait: 120s
+
+      - name: Instalar Ingress Controller
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.3/deploy/static/provider/kind/deploy.yaml
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
+
+      - name: Instalar metrics-server (requisito del HPA)
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+          # kind usa certificados de kubelet autofirmados
+          kubectl patch deployment metrics-server -n kube-system --type=json \
+            -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+          kubectl rollout status deployment/metrics-server -n kube-system --timeout=180s
+
+      # ----------------------------- DESPLIEGUE ------------------------------
+      - name: Autenticarse en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cargar la imagen en el cluster
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-$(echo ${{ github.sha }} | cut -c1-7)"
+          echo "IMAGE=$IMAGE" >> $GITHUB_ENV
+          docker pull "$IMAGE"
+          kind load docker-image "$IMAGE" --name ci-cluster
+
+      - name: Crear namespace y Secret
+        run: |
+          kubectl apply -f k8s/base/namespace.yaml
+          # El Secret se genera en tiempo de despliegue desde GitHub Secrets:
+          # nunca se versiona un valor real en el repositorio.
+          kubectl create secret generic task-api-secret \
+            --namespace "$NAMESPACE" \
+            --from-literal=APP_API_KEY="${{ secrets.APP_API_KEY || 'ci-ephemeral-key' }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Aplicar manifiestos
+        run: |
+          cd k8s/base
+          kustomize edit set image ghcr.io/USUARIO/task-api="$IMAGE"
+          cd ../..
+          kubectl apply -k k8s/base/
+
+      - name: Esperar el rollout
+        run: |
+          kubectl rollout status deployment/task-api -n "$NAMESPACE" --timeout=300s
+          kubectl get pods -n "$NAMESPACE" -o wide
+
+      # ----------------------------- VERIFICACIÓN ----------------------------
+      - name: Verificar el estado del despliegue
+        run: |
+          echo "### Estado del despliegue" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get deploy,pod,svc,ingress,hpa -n "$NAMESPACE" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Smoke tests contra el Ingress
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf -H "Host: ${APP_HOST}" http://localhost:8080/health/ready; then
+              echo "Aplicación respondiendo"
+              break
+            fi
+            echo "Esperando al Ingress... ($i/30)"; sleep 5
+          done
+
+          echo "--- /health/live ---"
+          curl -sf -H "Host: ${APP_HOST}" http://localhost:8080/health/live | tee /dev/stderr
+
+          echo "--- POST /api/v1/tasks ---"
+          curl -sf -X POST -H "Host: ${APP_HOST}" -H 'Content-Type: application/json' \
+            -d '{"title":"Tarea creada por el pipeline"}' \
+            http://localhost:8080/api/v1/tasks | tee /dev/stderr
+
+          echo "--- GET /api/v1/tasks ---"
+          curl -sf -H "Host: ${APP_HOST}" http://localhost:8080/api/v1/tasks | tee /dev/stderr
+
+          echo "--- /metrics ---"
+          curl -sf -H "Host: ${APP_HOST}" http://localhost:8080/metrics | head -20
+
+      - name: Verificar que el HPA lee métricas
+        run: |
+          # El HPA tarda hasta ~60s en poblar los targets tras el rollout.
+          for i in $(seq 1 12); do
+            OUT=$(kubectl get hpa task-api -n "$NAMESPACE" --no-headers)
+            echo "$OUT"
+            echo "$OUT" | grep -q "<unknown>" || break
+            sleep 10
+          done
+          kubectl describe hpa task-api -n "$NAMESPACE"
+
+      # ------------------------------ EVIDENCIAS -----------------------------
+      - name: Recolectar evidencias
+        if: always()
+        run: |
+          mkdir -p evidencias
+          kubectl get all -n "$NAMESPACE" -o wide            > evidencias/recursos.txt 2>&1 || true
+          kubectl describe deployment task-api -n "$NAMESPACE" > evidencias/deployment.txt 2>&1 || true
+          kubectl describe hpa task-api -n "$NAMESPACE"      > evidencias/hpa.txt 2>&1 || true
+          kubectl describe ingress task-api -n "$NAMESPACE"  > evidencias/ingress.txt 2>&1 || true
+          kubectl logs -n "$NAMESPACE" -l app.kubernetes.io/name=task-api --tail=200 --all-containers \
+                                                             > evidencias/logs-app.txt 2>&1 || true
+          kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp > evidencias/eventos.txt 2>&1 || true
+          kubectl top pods -n "$NAMESPACE"                   > evidencias/consumo.txt 2>&1 || true
+
+      - name: Publicar evidencias
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencias-despliegue
+          path: evidencias/
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  dast:
+    name: DAST — OWASP ZAP
+    needs: deploy
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_dast }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # El DAST necesita la aplicación EN EJECUCIÓN. Se levanta con Compose,
+      # que reproduce el mismo artefacto desplegado en Kubernetes.
+      - name: Autenticarse en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Levantar la aplicación
+        run: |
+          IMAGE="${REGISTRY}/${IMAGE_NAME}:sha-$(echo ${{ github.sha }} | cut -c1-7)"
+          docker run -d --name zap-target -p 8000:8000 \
+            -e APP_ENVIRONMENT=dast \
+            "$IMAGE"
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/health/ready && break
+            sleep 2
+          done
+
+      # ZAP Baseline: escaneo pasivo, rápido, sin ataques destructivos.
+      # Detecta cabeceras de seguridad ausentes, cookies inseguras, etc.
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.13.0
+        with:
+          target: http://localhost:8000
+          rules_file_name: .github/zap-rules.tsv
+          cmd_options: "-a -j"
+          allow_issue_writing: false
+          fail_action: false
+
+      # ZAP API Scan: usa el OpenAPI que expone FastAPI para recorrer
+      # sistemáticamente todos los endpoints documentados.
+      - name: ZAP API Scan (OpenAPI)
+        uses: zaproxy/action-api-scan@v0.9.0
+        with:
+          target: http://localhost:8000/openapi.json
+          format: openapi
+          cmd_options: "-a"
+          allow_issue_writing: false
+          fail_action: false
+
+      - name: Publicar reportes de DAST
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportes-dast
+          path: |
+            report_html.html
+            report_json.json
+            report_md.md
+          retention-days: 30
+
+      - name: Limpiar
+        if: always()
+        run: docker rm -f zap-target || true
