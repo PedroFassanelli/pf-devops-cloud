@@ -256,10 +256,13 @@ jobs:
       - name: Reportar tamaño de la imagen
         if: github.event_name != 'pull_request'
         run: |
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-$(git rev-parse --short HEAD)
-          echo "### Imagen construida" >> $GITHUB_STEP_SUMMARY
+          # GHCR exige el repositorio en minúsculas, pero github.repository
+          # conserva el caso del usuario. Normalizamos antes de la referencia.
+          IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          docker pull "$IMAGE:sha-$(git rev-parse --short HEAD)"
+          echo "### Imagen construida" >> "$GITHUB_STEP_SUMMARY"
           docker images --format "| {{.Repository}} | {{.Tag}} | {{.Size}} |" \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} >> $GITHUB_STEP_SUMMARY
+            "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   scan-image:
@@ -274,12 +277,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # GHCR exige el repositorio en minúsculas, pero github.repository conserva
+      # el caso del usuario. Normalizamos una vez y referenciamos por digest para
+      # apuntar exactamente a la imagen que publicó build-and-push (el tag por SHA
+      # corto también existe, pero el digest no depende de longitudes de hash).
+      - name: Normalizar referencia de la imagen
+        run: echo "IMAGE=$(echo '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       # Trivy escanea la imagen ya construida: paquetes del SO y dependencias
       # de Python con CVE conocidos.
       - name: Trivy
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          image-ref: ${{ env.IMAGE }}@${{ needs.build-and-push.outputs.image-digest }}
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
@@ -294,7 +304,7 @@ jobs:
       - name: Fallar ante vulnerabilidades críticas
         uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          image-ref: ${{ env.IMAGE }}@${{ needs.build-and-push.outputs.image-digest }}
           format: table
           severity: CRITICAL
           ignore-unfixed: true
