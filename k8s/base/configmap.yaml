@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: task-api-config
+  namespace: task-api
+  labels:
+    app.kubernetes.io/name: task-api
+    app.kubernetes.io/component: config
+data:
+  # Configuración NO sensible. Los secretos van en el Secret, nunca acá.
+  APP_ENVIRONMENT: "staging"
+  APP_LOG_LEVEL: "INFO"
+  APP_APP_NAME: "task-api"

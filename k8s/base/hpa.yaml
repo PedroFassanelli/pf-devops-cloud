@@ -1,0 +1,42 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: task-api
+  namespace: task-api
+  labels:
+    app.kubernetes.io/name: task-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: task-api
+  # FinOps: minReplicas=2 es el mínimo para alta disponibilidad;
+  # maxReplicas acota el gasto máximo ante un pico o un ataque.
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30    # reacciona rápido a los picos
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300   # baja despacio, evita flapping
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60

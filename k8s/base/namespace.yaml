@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: task-api
+  labels:
+    name: task-api
+    app.kubernetes.io/name: task-api
+    # Pod Security Standards: rechaza Pods privilegiados a nivel namespace.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

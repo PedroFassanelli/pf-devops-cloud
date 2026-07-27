@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: task-api
+  namespace: task-api
+  labels:
+    app.kubernetes.io/name: task-api
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # Rate limiting básico: mitigación de abuso en el borde.
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: task-api.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: task-api
+                port:
+                  name: http
