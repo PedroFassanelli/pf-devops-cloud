@@ -264,24 +264,28 @@ jobs:
       # ZAP Baseline: escaneo pasivo, rápido, sin ataques destructivos.
       # Detecta cabeceras de seguridad ausentes, cookies inseguras, etc.
       - name: ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.13.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           target: http://localhost:8000
           rules_file_name: .github/zap-rules.tsv
           cmd_options: "-a -j"
           allow_issue_writing: false
           fail_action: false
+          # Nombre propio: baseline y api-scan corren en el mismo job y
+          # upload-artifact@v4 rechaza dos artefactos con el mismo nombre.
+          artifact_name: zap_baseline
 
       # ZAP API Scan: usa el OpenAPI que expone FastAPI para recorrer
       # sistemáticamente todos los endpoints documentados.
       - name: ZAP API Scan (OpenAPI)
-        uses: zaproxy/action-api-scan@v0.9.0
+        uses: zaproxy/action-api-scan@v0.10.0
         with:
           target: http://localhost:8000/openapi.json
           format: openapi
           cmd_options: "-a"
           allow_issue_writing: false
           fail_action: false
+          artifact_name: zap_api
 
       - name: Publicar reportes de DAST
         if: always()
