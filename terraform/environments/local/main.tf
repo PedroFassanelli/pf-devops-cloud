@@ -106,9 +106,13 @@ resource "helm_release" "ingress_nginx" {
 
   # Se fija el controller al nodo control-plane, que es el único con los
   # puertos del host mapeados.
+  # type = "string" es obligatorio: sin él, el provider de Helm infiere el
+  # valor "true" como booleano y Kubernetes rechaza el nodeSelector, que exige
+  # valores string ("cannot unmarshal bool into ... nodeSelector of type string").
   set {
     name  = "controller.nodeSelector.ingress-ready"
     value = "true"
+    type  = "string"
   }
 
   set {
@@ -163,17 +167,41 @@ resource "helm_release" "metrics_server" {
 
 # --------------------------- PROMETHEUS + GRAFANA ----------------------------
 
+# El namespace y el ConfigMap del dashboard se crean ANTES del chart. Grafana
+# monta el ConfigMap task-api-dashboard al arrancar (dashboardsConfigMaps en el
+# values) y, si todavía no existe, el Pod queda en ContainerCreating y el chart
+# —que espera con wait=true— nunca termina. Crearlo acá elimina esa dependencia
+# de orden y hace que el entorno sea reproducible desde cero.
+resource "kubernetes_namespace" "monitoring" {
+  metadata {
+    name = "monitoring"
+  }
+
+  depends_on = [kind_cluster.this]
+}
+
+resource "kubernetes_config_map" "task_api_dashboard" {
+  metadata {
+    name      = "task-api-dashboard"
+    namespace = kubernetes_namespace.monitoring.metadata[0].name
+  }
+
+  data = {
+    "task-api.json" = file("${path.module}/../../../monitoring/grafana/dashboards/task-api.json")
+  }
+}
+
 resource "helm_release" "monitoring" {
   name             = "monitoring"
   repository       = "https://prometheus-community.github.io/helm-charts"
   chart            = "kube-prometheus-stack"
   version          = var.kube_prometheus_stack_version
-  namespace        = "monitoring"
-  create_namespace = true
+  namespace        = kubernetes_namespace.monitoring.metadata[0].name
+  create_namespace = false
   wait             = true
   timeout          = 900
 
   values = [file("${path.module}/values/kube-prometheus-stack.yaml")]
 
-  depends_on = [kind_cluster.this]
+  depends_on = [kubernetes_config_map.task_api_dashboard]
 }

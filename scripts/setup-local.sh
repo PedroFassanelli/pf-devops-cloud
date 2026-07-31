@@ -78,11 +78,9 @@ ok "Aplicación desplegada"
 
 # -------------------------------- MONITOREO ----------------------------------
 info "Configurando el monitoreo"
-kubectl create configmap task-api-dashboard \
-  --namespace monitoring \
-  --from-file=task-api.json=monitoring/grafana/dashboards/task-api.json \
-  --dry-run=client -o yaml | kubectl apply -f -
-
+# El ConfigMap task-api-dashboard lo crea Terraform antes del chart de
+# monitoreo (ver terraform/environments/local/main.tf): Grafana lo monta al
+# arrancar y crearlo después dejaba el Pod en ContainerCreating.
 kubectl apply -f monitoring/servicemonitor.yaml
 kubectl apply -f monitoring/prometheus-rules.yaml
 ok "ServiceMonitor y reglas de alerta aplicados"

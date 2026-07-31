@@ -15,6 +15,8 @@ htmlcov/
 *.tfstate.*
 *.tfplan
 crash.log
+# kubeconfig que escribe el provider de kind (contiene certificados del cluster)
+terraform/environments/local/*-config
 override.tf
 override.tf.json
 .terraformrc
