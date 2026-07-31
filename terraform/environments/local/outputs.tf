@@ -20,7 +20,7 @@ output "grafana_command" {
 
 output "prometheus_command" {
   description = "Comando para abrir Prometheus."
-  value       = "kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090"
+  value       = "kubectl port-forward -n monitoring svc/monitoring-prometheus 9090:9090"
 }
 
 output "hosts_entry" {

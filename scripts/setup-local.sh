@@ -102,7 +102,7 @@ cat <<RESUMEN
       Grafana      kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80
                    -> http://localhost:3000  (admin / admin)
 
-      Prometheus   kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+      Prometheus   kubectl port-forward -n monitoring svc/monitoring-prometheus 9090:9090
                    -> http://localhost:9090
 
   Siguiente paso:

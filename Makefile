@@ -93,7 +93,7 @@ grafana: ## Abre Grafana en localhost:3000
 .PHONY: prometheus
 prometheus: ## Abre Prometheus en localhost:9090
 	@echo "http://localhost:9090"
-	kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+	kubectl port-forward -n monitoring svc/monitoring-prometheus 9090:9090
 
 .PHONY: load
 load: ## Genera carga para demostrar el autoescalado
