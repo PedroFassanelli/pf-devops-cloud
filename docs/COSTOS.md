@@ -83,10 +83,21 @@ En Kubernetes, `requests` es lo que el planificador reserva: capacidad que se
 paga esté o no en uso. Sobredimensionar los requests obliga a mantener más nodos
 de los necesarios.
 
-Los valores del proyecto (50m de CPU y 64Mi de memoria como request, con límites
-de 300m y 192Mi) surgen de observar el consumo real durante las pruebas de
-carga. La regla práctica es fijar el request cerca del percentil 95 del uso
+Los valores del proyecto (50m de CPU y 128Mi de memoria como request, con
+límites de 300m y 256Mi) surgen de observar el consumo real durante las pruebas
+de carga. La regla práctica es fijar el request cerca del percentil 95 del uso
 observado y el límite con margen para picos.
+
+**Nota sobre la interacción con el HPA.** El request de memoria arrancó en 64Mi,
+pero la aplicación en reposo ya consume ~45Mi (el runtime de Python): eso daba un
+uso del ~71%, pegado al objetivo del 75% que usa el HPA para escalar por memoria.
+El efecto era que la métrica de memoria "clavaba" el número de réplicas —
+`techo(réplicas × 71/75)` siempre redondea al valor actual— e impedía el
+*scale-down*: el HPA subía bien ante la carga, pero no volvía a bajar. Subir el
+request a 128Mi deja el uso en reposo en ~35% y le devuelve margen a la métrica,
+de modo que el HPA reduce réplicas por CPU cuando la demanda cae. Es la tensión
+clásica entre FinOps (requests ajustados) y el autoescalado por memoria: el
+request tiene que quedar por encima del piso de consumo, no pegado a él.
 
 ### Techo del autoescalado
 

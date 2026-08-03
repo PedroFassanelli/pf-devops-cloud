@@ -55,10 +55,15 @@ spec:
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              # 128Mi (no 64Mi): la app en reposo ya usa ~45Mi. Con 64Mi de
+              # request eso era ~71%, pegado al objetivo del 75% del HPA, y la
+              # métrica de memoria "clavaba" el conteo de réplicas impidiendo el
+              # scale-down. Con 128Mi el uso en reposo queda en ~35% y el HPA
+              # puede reducir réplicas por CPU cuando cae la carga.
+              memory: 128Mi
             limits:
               cpu: 300m
-              memory: 192Mi
+              memory: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
