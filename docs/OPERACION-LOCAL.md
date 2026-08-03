@@ -83,10 +83,32 @@ Hay dos niveles, según qué quieras:
 > Recomendación: si vas a seguir en un rato, apagá Docker Desktop nomás. Si
 > terminaste, usá `teardown.sh` para no dejar contenedores ocupando recursos.
 
-### Volver a levantar tras apagar Docker
+### Volver a levantar tras reiniciar la PC o Docker
 
-Si solo apagaste Docker (no destruiste), al reabrirlo el cluster vuelve. Si algún
-pod quedó raro, un empujón: `kubectl rollout restart deployment/task-api -n task-api`.
+**Importante:** kind sobre Docker Desktop **no sobrevive bien a un reinicio de la
+máquina**. Los contenedores vuelven a arrancar, pero Docker Desktop pierde el
+mapeo del puerto dinámico de la API de Kubernetes, y kubectl deja de conectar:
+
+```
+Unable to connect to the server: dial tcp 127.0.0.1:XXXXX: connection refused
+```
+
+Se reconoce mirando `docker ps`: el puerto `6443/tcp` del control-plane aparece
+**sin** su mapeo al host (a diferencia de `0.0.0.0:8080->80/tcp`, que sí lo
+tiene). El `docker restart` no lo arregla (suele empeorarlo).
+
+La solución confiable es **recrear el cluster** (rápido, porque las imágenes ya
+están cacheadas):
+
+```bash
+kind delete cluster --name task-api-local
+cd terraform/environments/local && rm -f terraform.tfstate*
+cd ../../.. && ./scripts/setup-local.sh
+```
+
+> Es coherente con la filosofía del proyecto: el entorno local es **efímero y
+> descartable**. No está pensado para vivir entre reinicios, sino para levantarse
+> cuando se necesita (por ejemplo, para capturar evidencias) y destruirse después.
 
 ---
 
@@ -185,7 +207,7 @@ hacia 8. Al cortar la carga, el HPA **tarda ~5 minutos** en bajar réplicas: es 
 | Pods en `ImagePullBackOff` | La imagen no llegó a los nodos: `docker build -t task-api:local . && kind load docker-image task-api:local --name task-api-local` |
 | `task-api.local` no resuelve en el navegador | Falta la línea en el hosts de Windows (ver sección 4) |
 | Cada GET devuelve algo distinto | No es un bug: 2 réplicas con memoria propia (ADR-005). Para CRUD coherente, `make compose-up` |
-| Todo raro tras reiniciar la PC | Abrí Docker Desktop y esperá; si hace falta, `kubectl rollout restart deployment/task-api -n task-api` |
+| `Unable to connect to the server` / `connection refused` tras reiniciar la PC | kind perdió el puerto de la API. **Recreá el cluster** (ver "Volver a levantar tras reiniciar la PC" en la sección 2) |
 
 ---
 
