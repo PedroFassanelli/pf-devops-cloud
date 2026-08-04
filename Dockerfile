@@ -41,7 +41,7 @@ ARG GIT_SHA=unknown
 LABEL org.opencontainers.image.title="task-api" \
       org.opencontainers.image.version="${APP_VERSION}" \
       org.opencontainers.image.revision="${GIT_SHA}" \
-      org.opencontainers.image.source="https://github.com/USUARIO/pf-devops-cloud" \
+      org.opencontainers.image.source="https://github.com/PedroFassanelli/pf-devops-cloud" \
       org.opencontainers.image.licenses="MIT"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

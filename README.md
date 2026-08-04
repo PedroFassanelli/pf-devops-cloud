@@ -193,26 +193,6 @@ lo que los otros no ven.
 
 ---
 
-## Publicar el repositorio
-
-El proyecto incluye un script que genera un historial de 16 commits temáticos
-con mensajes descriptivos en formato Conventional Commits, agrupando los
-archivos por unidad de trabajo. Se ejecuta con tu propia identidad de git.
-
-```bash
-chmod +x scripts/init-git.sh
-./scripts/init-git.sh
-
-git remote add origin https://github.com/TU-USUARIO/pf-devops-cloud.git
-git push -u origin main
-```
-
-Después del push, habilitá los permisos que el pipeline necesita para publicar
-imágenes: *Settings → Actions → General → Workflow permissions → Read and write
-permissions*. El workflow de CI arranca automáticamente con el primer push.
-
----
-
 ## Requisitos previos
 
 | Herramienta | Versión mínima | Para qué |
